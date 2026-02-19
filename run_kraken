@@ -1,0 +1,180 @@
+#!/bin/bash
+################################################################################
+# run_kraken2.sh
+#
+# Example workflow for running Kraken2 on HPC( I ran this on WashU HPC-LSF cluster):
+#   1) Start interactive Docker + conda session (run from login node)
+#   2) Install Kraken2 into a conda environment
+#   3) Clone KrakenTools for extract_kraken_reads.py
+#   4) Run Kraken2 on a single sample
+#   5) Run Kraken2 on multiple samples in a loop, extract human reads,
+#      and align with Bowtie2
+#
+
+###############################################################################
+# 0. START AN INTERACTIVE DOCKER + CONDA SESSION (WASHU LSF EXAMPLE)
+###############################################################################
+# From the login node, start an interactive shell inside the Anaconda3 Docker:
+#
+# (try default resources)
+# bsub -G compute-cooper_m -Is -q general-interactive \
+#   -a 'docker(continuumio/anaconda3:2024.10-1)' \
+#   /bin/bash
+#
+# If that fails, increase memory:
+# bsub -G compute-cooper_m -Is -q general-interactive \
+#   -a 'docker(continuumio/anaconda3:2024.10-1)' \
+#   -R 'rusage[mem=16GB]' \
+#   /bin/bash
+#
+# Once inside the interactive shell, run the remaining steps below.
+###############################################################################
+
+
+###############################################################################
+# 1. CREATE AND ACTIVATE CONDA ENVIRONMENT, INSTALL KRAKEN2
+###############################################################################
+# Create a fresh environment for Kraken2 (run once):
+# conda create -y -n kraken_env
+#
+# Activate it:
+# source /opt/conda/etc/profile.d/conda.sh
+# conda activate kraken_env
+#
+# Install Kraken2 from bioconda:
+# conda install -y -c bioconda kraken2
+###############################################################################
+
+
+###############################################################################
+# 2. CLONE KRAKENTOOLS (FOR extract_kraken_reads.py)
+###############################################################################
+# KrakenTools provides extract_kraken_reads.py for extracting reads of
+# interest (e.g., human-only reads).
+#
+# git clone https://github.com/jenniferlu717/KrakenTools.git
+# cd KrakenTools
+#   (the script extract_kraken_reads.py will be in this directory)
+# cd -
+###############################################################################
+
+
+###############################################################################
+# 3. RUN KRAKEN2 ON A SINGLE PAIRED-END SAMPLE
+###############################################################################
+# Example paths – update to your own:
+SINGLE_DB="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/minikraken2_v2_8GB_201904_UPDATE"
+SINGLE_OUT_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/output"
+SINGLE_FASTQ_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/02_trimmed/trimgalore"
+
+# Example sample (R1/R2 names):
+SINGLE_SAMPLE="MCIA0354-CD4-IL6-STAT3"
+R1_SINGLE="${SINGLE_FASTQ_DIR}/${SINGLE_SAMPLE}_R1_001_val_1.fq.gz"
+R2_SINGLE="${SINGLE_FASTQ_DIR}/${SINGLE_SAMPLE}_R2_001_val_2.fq.gz"
+
+# Make sure output directory exists:
+mkdir -p "${SINGLE_OUT_DIR}"
+
+# Single-sample Kraken2 command:
+# (uncomment and run inside the interactive session)
+# kraken2 \
+#   --db "${SINGLE_DB}" \
+#   --threads 8 \
+#   --paired \
+#   --output "${SINGLE_OUT_DIR}/${SINGLE_SAMPLE}.kraken2.out" \
+#   --report "${SINGLE_OUT_DIR}/${SINGLE_SAMPLE}.kraken2_report.txt" \
+#   "${R1_SINGLE}" "${R2_SINGLE}"
+#
+# This produces a classification output and a summary report for that sample
+
+
+
+###############################################################################
+# 4. RUN KRAKEN2 ON MULTIPLE SAMPLES + EXTRACT HUMAN READS + BOWTIE2 ALIGNMENT
+###############################################################################
+# This section assumes:
+#   - All trimmed FASTQs live in TRIM_DIR and end with:
+#       *_R1_001_val_1.fq.gz and *_R2_001_val_2.fq.gz
+#   - You have already installed Kraken2 and KrakenTools
+#   - You have a Bowtie2 index for hg38
+###############################################################################
+
+# 4.1: PATHS AND ENVIRONMENT
+TRIM_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/02_trimmed/trimgalore"
+KRAKEN_DB="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/minikraken2_v2_8GB_201904_UPDATE"
+KRAKEN_OUTPUT_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/output"
+EXTRACTED_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/human_classified_only"
+BOWTIE_ALIGN_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/bowtie_alignment"
+
+# Bowtie2 installation and index
+export BOWTIE2_HOME="/storage1/fs1/cooper_m/Active/r.sivani/tools/bowtie2/bowtie2-2.5.4"
+export PATH="${BOWTIE2_HOME}:${PATH}"
+
+BOWTIE_INDEX="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/genome/hg38/ncbi_dataset/ncbi_dataset/data/GCF_000001405.40/hg38"
+
+# KrakenTools location
+KRAKENTOOLS_DIR="/path/to/KrakenTools"   # change to your actual path
+
+# Make output directories
+mkdir -p "${KRAKEN_OUTPUT_DIR}" "${EXTRACTED_DIR}" "${BOWTIE_ALIGN_DIR}"
+
+# 4.2: LOOP OVER ALL R1 FILES
+for R1 in "${TRIM_DIR}"/*_R1_001_val_1.fq.gz; do
+    # Extract sample name base
+    SAMPLE=$(basename "${R1}" _R1_001_val_1.fq.gz)
+    R2="${TRIM_DIR}/${SAMPLE}_R2_001_val_2.fq.gz"
+
+    echo "==============================================="
+    echo "Processing sample: ${SAMPLE}"
+    echo "R1: ${R1}"
+    echo "R2: ${R2}"
+    echo "==============================================="
+
+    ###########################################################################
+    # STEP 1: RUN KRAKEN2 CLASSIFICATION
+    ###########################################################################
+    kraken2 \
+        --db "${KRAKEN_DB}" \
+        --threads 8 \
+        --paired \
+        --output "${KRAKEN_OUTPUT_DIR}/${SAMPLE}.kraken2.out" \
+        --report "${KRAKEN_OUTPUT_DIR}/${SAMPLE}.kraken2_report.txt" \
+        "${R1}" "${R2}"
+
+    ###########################################################################
+    # STEP 2: EXTRACT HUMAN READS ONLY (TAXID 9606)
+    ###########################################################################
+    # KrakenTools documentation describes paired usage with -s1/-s2 and -o/-o2.
+    ###########################################################################
+    python "${KRAKENTOOLS_DIR}/extract_kraken_reads.py" \
+        -k "${KRAKEN_OUTPUT_DIR}/${SAMPLE}.kraken2.out" \
+        -r "${KRAKEN_OUTPUT_DIR}/${SAMPLE}.kraken2_report.txt" \
+        -s1 "${R1}" \
+        -s2 "${R2}" \
+        -o "${EXTRACTED_DIR}/${SAMPLE}_R1.fastq" \
+        -o2 "${EXTRACTED_DIR}/${SAMPLE}_R2.fastq" \
+        --taxid 9606 \
+        --include-children \
+        --fastq-output
+
+    ###########################################################################
+    # STEP 3: COMPRESS EXTRACTED READS
+    ###########################################################################
+    gzip -f "${EXTRACTED_DIR}/${SAMPLE}_R1.fastq"
+    gzip -f "${EXTRACTED_DIR}/${SAMPLE}_R2.fastq"
+
+    ###########################################################################
+    # STEP 4: ALIGN HUMAN READS WITH BOWTIE2 (TO hg38)
+    ###########################################################################
+    bowtie2 \
+        -x "${BOWTIE_INDEX}" \
+        -1 "${EXTRACTED_DIR}/${SAMPLE}_R1.fastq.gz" \
+        -2 "${EXTRACTED_DIR}/${SAMPLE}_R2.fastq.gz" \
+        -S "${BOWTIE_ALIGN_DIR}/${SAMPLE}_clean.sam"
+
+    echo "Sample ${SAMPLE} DONE"
+done
+
+###############################################################################
+# END OF SCRIPT
+###############################################################################
