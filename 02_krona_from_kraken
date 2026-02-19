@@ -1,0 +1,130 @@
+#!/bin/bash
+################################################################################
+# krona_from_kraken.sh
+#
+# Example workflow for generating Krona HTML visualizations from Kraken2 output.
+#
+# This script assumes:
+#   - You have run Kraken2 with the --report option and produced *.kraken2_report.txt
+#   - You have access to KronaTools (ktImportTaxonomy, ktImportText, etc.)
+#   - Optionally, you have KrakenTools installed for kreport2krona.py
+#
+# The script shows:
+#   1) How to install/load KronaTools
+#   2) How to convert a Kraken2 report to Krona input
+#   3) How to generate Krona HTML plots (single sample and batch mode)
+
+
+set -euo pipefail
+
+###############################################################################
+# 0. INSTALL OR LOAD KRONATOOLS
+###############################################################################
+# On many HPC systems, KronaTools is available as a module.
+# Example (adjust for your environment):
+#
+module load kronatools
+#
+#  I prefer to install within a conda environment
+# install krona
+conda install -c bioconda krona
+#
+# After installation, make sure ktImportTaxonomy is in your PATH.
+###############################################################################
+
+
+###############################################################################
+# 1. PATHS TO KRAKEN2 REPORTS
+###############################################################################
+# Directory containing Kraken2 report files (produced with --report):
+KRAKEN_REPORT_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/output"
+
+# Output directory for Krona HTML files:
+KRONA_OUT_DIR="/storage1/fs1/cooper_m/Active/r.sivani/cutandrun/new_data/03_alignment/kraken/krona"
+
+mkdir -p "${KRONA_OUT_DIR}"
+
+###############################################################################
+# 2. SINGLE-SAMPLE EXAMPLE
+###############################################################################
+# Suppose you have one sample report, e.g.:
+SINGLE_SAMPLE="MCIA0354-CD4-IL6-STAT3"
+SINGLE_REPORT="${KRAKEN_REPORT_DIR}/${SINGLE_SAMPLE}.kraken2_report.txt"
+
+# Approach A: Use KrakenTools kreport2krona.py (recommended).
+# This converts a Kraken into a Krona-compatible tabular file,
+# which we then import with ktImportText.
+#
+# Requires KrakenTools:
+#   git clone https://github.com/jenniferlu717/KrakenTools.git
+#   (ensure kreport2krona.py is in your PATH or specify full path)
+#
+# Uncomment and edit KRAKENTOOLS_DIR if using this:
+# KRAKENTOOLS_DIR="/path/to/KrakenTools"
+#
+# Example commands:
+# python "${KRAKENTOOLS_DIR}/kreport2krona.py" \
+#   --report "${SINGLE_REPORT}" \
+#   --output "${KRONA_OUT_DIR}/${SINGLE_SAMPLE}.krona.input"
+#
+# ktImportText \
+#   "${KRONA_OUT_DIR}/${SINGLE_SAMPLE}.krona.input" \
+#   -o "${KRONA_OUT_DIR}/${SINGLE_SAMPLE}.krona.html"
+#
+# The resulting HTML file can be opened in a web browser.
+
+###############################################################################
+# 3. ALTERNATIVE: DIRECTLY FROM KRAKEN2 REPORT USING ktImportTaxonomy (I preferred using this)
+###############################################################################
+# A Kraken2 report has several columns; often, the read count and NCBI taxID
+# can be used as magnitude and taxonomy ID.
+#
+# One common pattern is to extract:
+#   - magnitude (counts) and taxID columns, then feed to ktImportTaxonomy.
+#
+# Example using cut to create a simple 2-column file:
+#
+#   cut -f3,5 "${SINGLE_REPORT}" > "${KRONA_OUT_DIR}/${SINGLE_SAMPLE}.krona.tsv"
+#
+# Then run ktImportTaxonomy, specifying which column is taxID and which is
+# magnitude (see `ktImportTaxonomy` manual for details).
+#
+#   ktImportTaxonomy \
+#     -t 2 \        # taxID in column 2
+#     -m 1 \        # magnitude (counts) in column 1
+#     -o "${KRONA_OUT_DIR}/${SINGLE_SAMPLE}.krona.html" \
+#     "${KRONA_OUT_DIR}/${SINGLE_SAMPLE}.krona.tsv"
+#
+# This produces an interactive Krona plot for that sample.
+
+###############################################################################
+# 4. BATCH MODE: MULTIPLE KRAKEN2 REPORTS -> MULTIPLE KRONA PLOTS
+###############################################################################
+# Loop over all *.kraken2_report.txt files in KRAKEN_REPORT_DIR and create
+# one Krona HTML per sample.
+
+for REPORT in "${KRAKEN_REPORT_DIR}"/*.kraken2_report.txt; do
+    [ -e "${REPORT}" ] || continue  # skip if no files match
+
+    BASENAME=$(basename "${REPORT}" .kraken2_report.txt)
+    echo "Generating Krona plot for sample: ${BASENAME}"
+
+    # Example: direct cut + ktImportTaxonomy (no KrakenTools dependency)
+    TMP_TSV="${KRONA_OUT_DIR}/${BASENAME}.krona.tsv"
+
+    # Extract counts (col 3) and taxID (col 5) from Kraken2 report.[web:27][web:31]
+    cut -f3,5 "${REPORT}" > "${TMP_TSV}"
+
+    # Create Krona HTML
+    ktImportTaxonomy \
+        -t 2 \
+        -m 1 \
+        -o "${KRONA_OUT_DIR}/${BASENAME}.krona.html" \
+        "${TMP_TSV}"
+
+    echo "  -> ${KRONA_OUT_DIR}/${BASENAME}.krona.html"
+done
+
+###############################################################################
+#DONE
+###############################################################################
